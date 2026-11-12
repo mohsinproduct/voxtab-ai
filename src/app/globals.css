@@ -1,0 +1,397 @@
+@import "tailwindcss";
+
+/* ============================================================
+   DESIGN TOKENS — VoxTab Warm Dark System
+   ============================================================ */
+:root {
+  --background: #16131a;
+  --foreground: #ffffff;
+  --card: #1d1922;
+  --card-foreground: #ffffff;
+  --muted: #25202a;
+  --muted-foreground: #faf5ef;
+
+  /* Backgrounds */
+  --bg-app: #16131a;
+  --bg-card: #1d1922;
+  --bg-surface: #25202a;
+  --bg-muted: #19151d;
+
+  /* Hairline Borders */
+  --border: #374151;
+  --border-subtle: #28222e;
+
+  /* Foregrounds */
+  --fg-primary: #ffffff;
+  --fg-secondary: #faf5ef;
+  --fg-muted: #9ca3af;
+  --ink: #1b1418;
+
+  /* Brand - Warm Luminous Amber */
+  --brand: #ffd9b4;
+  --brand-light: #f8cda3;
+  --brand-glow: rgba(255, 217, 180, 0.22);
+  --brand-dim: rgba(255, 217, 180, 0.09);
+
+  /* Status - PayPal Blue for Paid / Verified */
+  --success: #38bdf8;
+  --success-bg: rgba(0, 156, 222, 0.12);
+  --warning: #f8cda3;
+  --warning-bg: rgba(248, 205, 163, 0.1);
+  --danger: #ff7a7a;
+  --danger-bg: rgba(255, 122, 122, 0.1);
+}
+
+/* ============================================================
+   BASE RESET
+   ============================================================ */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background-color: var(--bg-app);
+  background-image: radial-gradient(ellipse 80% 45% at 50% -10%, rgba(255, 217, 180, 0.11), transparent 70%);
+  background-attachment: fixed;
+  color: var(--fg-primary);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono {
+  font-family: var(--font-geist-mono), 'Courier New', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================================
+   SCROLLBAR
+   ============================================================ */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: var(--fg-muted); }
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* ============================================================
+   ANIMATIONS & SCROLL REVEAL
+   ============================================================ */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes shimmer {
+  0%   { background-position: -200% center; }
+  100% { background-position: 200% center; }
+}
+
+.animate-fade-up   { animation: fadeUp 0.5s ease both; }
+.animate-fade-in   { animation: fadeIn 0.3s ease both; }
+.animate-spin-slow { animation: spin 2s linear infinite; }
+
+.reveal-on-scroll {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.65s cubic-bezier(0.22, 1, 0.36, 1), transform 0.65s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal-on-scroll.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.reveal-from-left {
+  opacity: 0;
+  transform: translate3d(-45vw, 0, 0);
+  transition: opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1), transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal-from-right {
+  opacity: 0;
+  transform: translate3d(45vw, 0, 0);
+  transition: opacity 0.8s cubic-bezier(0.22, 1, 0.36, 1), transform 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.reveal-on-scroll.is-visible .reveal-from-left,
+.reveal-from-left.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+
+.reveal-on-scroll.is-visible .reveal-from-right,
+.reveal-from-right.is-visible {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+
+/* ============================================================
+   INFINITE MARQUEE & MINI-UI PREVIEW ANIMATIONS
+   ============================================================ */
+@keyframes marqueeScroll {
+  0%   { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+.marquee-track {
+  display: flex;
+  width: max-content;
+  animation: marqueeScroll 26s linear infinite;
+}
+
+.marquee-track:hover {
+  animation-play-state: paused;
+}
+
+@keyframes waveBounce {
+  0%, 100% { transform: scaleY(0.35); }
+  50%      { transform: scaleY(1); }
+}
+
+.wave-bar {
+  transform-origin: center;
+  animation: waveBounce 1.1s ease-in-out infinite;
+}
+
+/* ============================================================
+   COMPONENT LAYER (Allows Tailwind utility classes like .sticky,
+   .border-*, and .bg-* to override cleanly)
+   ============================================================ */
+@layer components {
+  .glass {
+    background: rgba(22, 19, 26, 0.88);
+    backdrop-filter: blur(24px);
+    border-bottom: 1px solid rgba(255, 217, 180, 0.08);
+  }
+
+  .card {
+    background-color: var(--bg-card);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+  }
+
+  .card-surface {
+    background-color: var(--bg-surface);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 14px;
+  }
+
+  .spotlight-card {
+    position: relative;
+    background-color: #1b1720;
+    background-image: radial-gradient(rgba(255, 217, 180, 0.04) 1px, transparent 1px);
+    background-size: 18px 18px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: transform 0.28s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.28s ease, box-shadow 0.28s ease;
+  }
+
+  .nav-link-glow {
+    position: relative;
+    color: #a8a2b0;
+    transition: color 0.2s ease, text-shadow 0.2s ease, background 0.2s ease;
+  }
+
+  .nav-link-glow:hover,
+  .nav-link-glow.is-active {
+    color: #ffd9b4;
+    text-shadow: 0 0 14px rgba(255, 217, 180, 0.45);
+    background: radial-gradient(ellipse at center, rgba(255, 217, 180, 0.14) 0%, transparent 72%);
+  }
+
+  .pill-btn-glow {
+    background-color: #1e1924;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #ffffff;
+    transition: border-color 0.22s ease, box-shadow 0.22s ease, background-color 0.22s ease, transform 0.2s ease;
+  }
+
+  .pill-btn-glow:hover {
+    background-color: #241e2b;
+    border-color: rgba(255, 217, 180, 0.58);
+    box-shadow: 0 0 20px rgba(255, 217, 180, 0.18), inset 0 0 12px rgba(255, 217, 180, 0.06);
+  }
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .spotlight-card::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    background: radial-gradient(
+      300px circle at var(--mx, -500px) var(--my, -500px),
+      rgba(255, 217, 180, 0.11),
+      transparent 70%
+    );
+    opacity: var(--spotlight-opacity, 0);
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .spotlight-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: radial-gradient(
+      220px circle at var(--mx, -500px) var(--my, -500px),
+      rgba(255, 217, 180, 0.5),
+      transparent 70%
+    );
+    -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    opacity: var(--spotlight-opacity, 0);
+    transition: opacity 0.25s ease;
+    pointer-events: none;
+    z-index: 1;
+  }
+}
+
+.spotlight-card > * {
+  position: relative;
+  z-index: 2;
+}
+
+/* ============================================================
+   RECEIPT LASER SCANNER ANIMATION
+   ============================================================ */
+@keyframes scanLaser {
+  0%   { top: 4%; opacity: 0.95; }
+  50%  { top: 92%; opacity: 1; }
+  100% { top: 4%; opacity: 0.95; }
+}
+
+.scan-laser-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent 0%, #ffd9b4 20%, #ffffff 50%, #ffd9b4 80%, transparent 100%);
+  box-shadow: 0 0 18px 4px rgba(255, 217, 180, 0.65), 0 0 36px 8px rgba(255, 217, 180, 0.28);
+  animation: scanLaser 2.4s ease-in-out infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+.scan-grid-overlay {
+  background-image:
+    linear-gradient(to right, rgba(255, 217, 180, 0.07) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 217, 180, 0.07) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* ============================================================
+   BRANDED TEXT SELECTION & 1D PORTAL CURSOR
+   ============================================================ */
+::selection {
+  background-color: rgba(255, 217, 180, 0.28);
+  color: #ffd9b4;
+}
+
+::-moz-selection {
+  background-color: rgba(255, 217, 180, 0.28);
+  color: #ffd9b4;
+}
+
+.portal-slit {
+  display: inline-block;
+  width: 3px;
+  height: 15px;
+  border-radius: 9999px;
+  background: #ffffff;
+  box-shadow:
+    0 0 10px 2px rgba(255, 217, 180, 0.95),
+    0 0 22px 6px rgba(255, 217, 180, 0.45);
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(37, 32, 42, 0.65) 25%,
+    rgba(255, 217, 180, 0.09) 50%,
+    rgba(37, 32, 42, 0.65) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* ============================================================
+   RECEIPT ICON EMERGENCE & PORTAL SHIMMER TEXT
+   ============================================================ */
+@keyframes popFromReceiptIcon {
+  0%   { opacity: 0; transform: translate(-34px, 18px) scale(0.35); }
+  70%  { opacity: 1; transform: translate(2px, -2px) scale(1.05); }
+  100% { opacity: 1; transform: translate(0, 0) scale(1); }
+}
+
+@keyframes subtleFloat {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-2.5px); }
+}
+
+.sample-pop-badge {
+  transform-origin: bottom left;
+  animation:
+    popFromReceiptIcon 0.65s cubic-bezier(0.22, 1, 0.36, 1) 0.15s both,
+    subtleFloat 3.2s ease-in-out 0.85s infinite;
+}
+
+@keyframes portalTextShine {
+  0%   { background-position: 200% center; }
+  100% { background-position: -200% center; }
+}
+
+.portal-shine-text {
+  background: linear-gradient(
+    90deg,
+    #8e95a5 0%,
+    #faf5ef 35%,
+    #ffd9b4 50%,
+    #faf5ef 65%,
+    #8e95a5 100%
+  );
+  background-size: 220% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: portalTextShine 4.5s linear infinite;
+}
+
+/* ============================================================
+   PAUSED ANIMATION STATES FOR STACKED CARDS
+   ============================================================ */
+.scan-laser-paused {
+  animation-play-state: paused !important;
+  opacity: 0.25 !important;
+}
+
+.wave-bar-paused {
+  animation-play-state: paused !important;
+  transform: scaleY(0.35) !important;
+  opacity: 0.45;
+}
