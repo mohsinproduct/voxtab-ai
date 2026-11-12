@@ -803,15 +803,15 @@ export function StepAssign({
         </button>
       </div>
 
-      {/* 2. Custom Tip Bar */}
-      {inputMode === 'type' && ledger && onUpdateTip && (
+      {/* 2. Extras Bar */}
+      {ledger && onUpdateTip && (
         <div className="card-surface p-3.5 sm:p-4 rounded-xl space-y-3 animate-fade-in">
           <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex items-center gap-2">
               <span className="w-6 h-6 rounded-full bg-[var(--brand-dim)] border border-[var(--brand)]/30 flex items-center justify-center text-[var(--brand)] shrink-0">
                 <Coins className="w-3.5 h-3.5"/>
               </span>
-              <span className="text-xs font-bold text-white">Custom Tip</span>
+              <span className="text-xs font-bold text-white">Extras (e.g. tip given)</span>
               {currentTipCents > 0 && (
                 <span className="mono text-xs font-bold text-[var(--brand)]">
                   {fmtMoney(currentTipCents)}
@@ -826,13 +826,14 @@ export function StepAssign({
                 </span>
                 <input
                   type="number"
+                  inputMode="decimal"
                   step={currencyMeta.zeroDecimal ? '1' : '0.01'}
                   min="0"
                   placeholder={currencyMeta.zeroDecimal ? '0' : '0.00'}
                   value={customTipDraft}
                   onChange={(e) => setCustomTipDraft(e.target.value)}
-                  aria-label="Custom tip amount"
-                  className="w-full h-8 pl-7 pr-2.5 rounded-full bg-[var(--bg-muted)] border border-white/15 focus:border-[var(--brand)] text-xs mono text-white outline-none"
+                  aria-label="Extras amount"
+                  className="w-full h-8 pl-7 pr-2.5 rounded-full bg-[var(--bg-muted)] border border-white/15 focus:border-[var(--brand)] text-xs mono text-white outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                 />
               </div>
 
@@ -850,7 +851,7 @@ export function StepAssign({
                     setCustomTipDraft('');
                     onUpdateTip(0, undefined);
                   }}
-                  title="Remove tip"
+                  title="Remove extras"
                   className="h-8 w-8 rounded-full bg-[var(--bg-muted)] hover:bg-[#ff7a7a]/15 text-[var(--fg-muted)] hover:text-[#ff7a7a] border border-white/10 flex items-center justify-center transition-colors cursor-pointer shrink-0"
                 >
                   <X className="w-3.5 h-3.5"/>
@@ -859,11 +860,11 @@ export function StepAssign({
             </form>
           </div>
 
-          {/* Row 2: How to Divide or Assign the Tip */}
+          {/* Row 2: How to Divide or Assign Extras */}
           {currentTipCents > 0 && (
             <div className="pt-2 border-t border-white/8 flex flex-wrap items-center justify-between gap-2">
               <span className="text-[11px] text-[var(--fg-muted)] font-medium">
-                Divide tip:
+                Divide extras:
               </span>
 
               <div className="flex flex-wrap items-center gap-1.5">
@@ -997,7 +998,7 @@ export function StepAssign({
                 )}
                 {ledger.tipCents > 0 && (
                   <span className="text-[var(--fg-muted)]">
-                    Tip:{' '}
+                    Extras:{' '}
                     <strong className="mono text-[var(--fg-secondary)]">
                       {fmtMoney(ledger.tipCents)}
                       {ledger.tipAllocationRule

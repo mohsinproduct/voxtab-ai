@@ -633,7 +633,7 @@ export class ShareLinkAdapter {
       if (res.ok) {
         const data = await res.json();
         if (data?.code) {
-          return `${getPublicAppOrigin()}/s/${data.code}#tab=${encodeURIComponent(encoded)}`;
+          return `${getPublicAppOrigin()}/s/${data.code}`;
         }
       }
     } catch {}

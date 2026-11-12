@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getServerShareByCode } from '@/lib/shortLinkStore';
 
 export async function GET(
   req: NextRequest,
@@ -12,5 +13,16 @@ export async function GET(
   if (person) {
     target.searchParams.set('person', person);
   }
+
+  try {
+    const record = await getServerShareByCode(code);
+    if (record?.encoded) {
+      const hashParams = new URLSearchParams();
+      hashParams.set('tab', record.encoded);
+      if (person) hashParams.set('person', person);
+      target.hash = hashParams.toString();
+    }
+  } catch {}
+
   return NextResponse.redirect(target);
 }

@@ -32,7 +32,7 @@ export default function SharePage() {
       const shortCode = query.get('s');
       const shareParams = ShareLinkAdapter.readShareParams();
       let { encoded } = shareParams;
-      const p = shareParams.person;
+      const p = query.get('person') || query.get('p') || shareParams.person;
 
       // When a share code exists, the server-stored bill is authoritative.
       // Do not let an edited URL fragment override an existing server share record.

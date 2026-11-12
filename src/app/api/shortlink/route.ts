@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
     const code = createHash('sha256')
       .update(`${currencyCode}:${encoded.trim()}`)
       .digest('base64url')
-      .slice(0, 22);
+      .slice(0, 8);
 
     const existing = await getServerShareByCode(code);
     if (!existing) {

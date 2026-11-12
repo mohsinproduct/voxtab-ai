@@ -754,11 +754,13 @@ export function StepSettle({
     const requestGen = billGen;
     const base = await ensureShareUrl();
     if (!base) return;
-    // Verify generation still matches before copying.
     if (currentBillRef.current.billGen !== requestGen) return;
-    const personUrl = base.includes('#')
-      ? `${base}&person=${encodeURIComponent(personName)}`
-      : `${base}#person=${encodeURIComponent(personName)}`;
+    const isShortLink = /\/s\/[^/?#]+$/.test(base);
+    const personUrl = isShortLink
+      ? `${base}?p=${encodeURIComponent(personName)}`
+      : base.includes('#')
+        ? `${base}&person=${encodeURIComponent(personName)}`
+        : `${base}#person=${encodeURIComponent(personName)}`;
     const ok = await copyText(personUrl);
     if (ok) {
       const k = paidKey(personName);
@@ -884,7 +886,7 @@ export function StepSettle({
 
               <p className="text-[11px] text-[var(--fg-muted)] mt-0.5 truncate">
                 {split.items.length} {split.items.length === 1 ? 'item' : 'items'}
-                {split.tipCents > 0 ? ` · incl. ${fmtMoney(split.tipCents)} tip` : ''}
+                {split.tipCents > 0 ? ` · incl. ${fmtMoney(split.tipCents)} extras` : ''}
               </p>
             </div>
           </div>
@@ -1066,7 +1068,7 @@ export function StepSettle({
 
               {split.tipCents > 0 && (
                 <div className="flex items-center justify-between text-[11px] text-[var(--fg-muted)]">
-                  <span>Tip share</span>
+                  <span>Extras share</span>
                   <span className="mono">{fmtMoney(split.tipCents)}</span>
                 </div>
               )}
@@ -1486,10 +1488,10 @@ export function StepSettle({
                   </span>
                 </div>
               )}
-              {ledger.tipCents > 0 && (
+                {ledger.tipCents > 0 && (
                 <div className="flex justify-between text-[var(--fg-muted)]">
                   <span>
-                    Tip{' '}
+                    Extras{' '}
                     {ledger.tipAllocationRule
                       ? `(${formatRuleSummary(ledger.tipAllocationRule)})`
                       : '(By Item Share)'}

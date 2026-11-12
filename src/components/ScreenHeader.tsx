@@ -500,7 +500,7 @@ export function AppFooter() {
 
 export const WIZARD_STEPS: Step[] = [
   { id: 1, label: 'Capture', sublabel: 'Snap or upload receipt' },
-  { id: 2, label: 'Assign', sublabel: 'Voice split, items & tip' },
+  { id: 2, label: 'Assign', sublabel: 'Voice split, items & extras' },
   { id: 3, label: 'Settle', sublabel: 'Pay & share' },
 ];
 
