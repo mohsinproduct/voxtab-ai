@@ -27,6 +27,11 @@ export const metadata: Metadata = {
     'Snap any receipt, say who had what in plain English, and get paid back with PayPal QR codes and shareable links.',
   keywords: ['bill splitter', 'receipt scanner', 'voice bill split', 'expense sharing', 'PayPal bill split'],
   authors: [{ name: 'Mohsin' }],
+  icons: {
+    icon: '/icon.svg',
+    shortcut: '/icon.svg',
+    apple: '/icon.svg',
+  },
   openGraph: {
     title: 'VoxTab | Snap the Bill, Speak the Split',
     description: 'Snap any receipt, say who had what, and settle up instantly on PayPal.',

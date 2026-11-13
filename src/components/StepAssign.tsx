@@ -323,6 +323,15 @@ export function StepAssign({
       setRecording(true);
       setRecordSeconds(0);
 
+      setTimeout(() => {
+        const el = receiptSectionRef.current;
+        if (el) {
+          const headerOffset = 76; // 64px sticky navbar + 12px breathing room
+          const top = el.getBoundingClientRect().top + window.scrollY - headerOffset;
+          window.scrollTo({ top: Math.max(0, top), behavior: 'smooth' });
+        }
+      }, 80);
+
       if (timerRef.current) clearInterval(timerRef.current);
       timerRef.current = setInterval(() => {
         setRecordSeconds((s) => s + 1);
@@ -351,9 +360,6 @@ export function StepAssign({
       stopRecording();
     } else {
       startRecording();
-      setTimeout(() => {
-        receiptSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      }, 100);
     }
   };
 
@@ -413,9 +419,24 @@ export function StepAssign({
   const { masterExample, animatedPhrases } = useMemo(() => {
     const rows = ledger?.rows || [];
     const clean = (s?: string) => (s || '').replace(/^\d+\s*[xX]\s*/, '').trim();
-    const item1 = clean(rows[0]?.description) || 'Artisan Pizza Pack';
+
+    // Pick a multi-quantity row for "Sara took 1 ..." and a DIFFERENT row for "I got the ..."
     const multiRow = rows.find((r) => (r.quantity || 1) > 1);
-    const item2 = clean(multiRow?.description || rows[1]?.description) || 'Organic Cold Brew';
+    const firstSingleRow = rows.find((r) => (r.quantity || 1) <= 1);
+
+    let row1: LedgerRow | undefined = rows[0];
+    let row2: LedgerRow | undefined = multiRow && multiRow.id !== row1?.id ? multiRow : (rows[1] || rows[0]);
+
+    if (row1 && multiRow && row1.id === multiRow.id && rows.length > 1) {
+      row1 = firstSingleRow || rows[1];
+      row2 = multiRow;
+    }
+
+    // Never reference the same receipt row twice in the example.
+    if (row2 && row1 && row2.id === row1.id) row2 = undefined;
+
+    const item1 = clean(row1?.description) || 'Artisan Pizza Pack';
+    const item2 = clean(row2?.description) || 'Organic Cold Brew';
 
     const master =
       inputMode === 'type'
@@ -701,7 +722,7 @@ export function StepAssign({
                     <span>Voice split applied</span>
                   </div>
                   <p className="text-xs text-[var(--fg-muted)]">
-                    Tap mic again if the next person wants to speak their items.
+                    Tap Settle below, or tap mic to record a new split.
                   </p>
                 </div>
               ) : (
@@ -710,7 +731,7 @@ export function StepAssign({
                     Tap mic and speak the split
                   </p>
                   <p className="text-xs text-[var(--fg-muted)]">
-                    Speak who had what (or switch to Type to add a custom tip).
+                    Say everyone&apos;s items or pass the phone in one recording.
                   </p>
                 </div>
               )}
@@ -803,8 +824,8 @@ export function StepAssign({
         </button>
       </div>
 
-      {/* 2. Extras Bar */}
-      {ledger && onUpdateTip && (
+      {/* 2. Extras Bar (Shown only in Type mode) */}
+      {inputMode === 'type' && ledger && onUpdateTip && (
         <div className="card-surface p-3.5 sm:p-4 rounded-xl space-y-3 animate-fade-in">
           <div className="flex flex-wrap items-center justify-between gap-2.5">
             <div className="flex items-center gap-2">
@@ -928,7 +949,7 @@ export function StepAssign({
         <div className="space-y-2.5">
           <div
             ref={receiptSectionRef}
-            className={`card-surface p-3.5 rounded-xl space-y-2.5 transition-all ${
+            className={`scroll-mt-20 card-surface p-3.5 rounded-xl space-y-2.5 transition-all ${
               recording ? 'ring-2 ring-[#ff7a7a]/60 bg-[#ff7a7a]/5' : ''
             }`}
           >

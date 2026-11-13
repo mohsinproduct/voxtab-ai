@@ -125,6 +125,9 @@ export function TabScreen({ step }: { step: TabStep }) {
         tipCents: ledger.tipCents || 0,
       };
 
+      const baseRows = toUnassignedRows(baseline.rows);
+      const baseParticipants: WizardParticipant[] = [];
+
       setBusy(true);
       setVoiceError(null);
       try {
@@ -135,8 +138,8 @@ export function TabScreen({ step }: { step: TabStep }) {
             tabId: ledger.id,
             audio: aud || undefined,
             voiceTranscript: txt || undefined,
-            existingItems: ledger.rows,
-            existingParticipants: participants,
+            existingItems: baseRows,
+            existingParticipants: baseParticipants,
             merchant: ledger.merchant,
             date: ledger.date,
             taxCents: ledger.taxCents,

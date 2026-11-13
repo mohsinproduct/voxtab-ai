@@ -26,8 +26,8 @@ import {
 import { formatRuleSummary, LEDGER_SCHEMA_VERSION } from '@/lib/ledgerUtils';
 
 /** itemMatch values meaning "the remaining items" / "the whole bill" (shared by all matching steps). */
-const REST_MATCH_RE = /^(?:rest|the rest|other|others|remaining|everything else)$/i;
-const ALL_MATCH_RE = /^(?:all|everything|both|bill|receipt|all items|the whole bill|whole bill|split)$/i;
+const REST_MATCH_RE = /^(?:(?:the\s+)?rest(?:\s+of\s+(?:the\s+)?(?:items|bill|receipt|order|food))?|(?:the\s+|all\s+)?(?:other|others|remaining)(?:\s+items)?|everything\s+else)$/i;
+const ALL_MATCH_RE = /^(?:all|everything|both|bill|receipt|all\s+items|the\s+whole\s+bill|whole\s+bill|entire\s+bill|split)$/i;
 
 /**
  * Common contract for receipt extraction engines.
@@ -49,54 +49,168 @@ function normalizePersonName(name: string): string {
   return trimmed.charAt(0).toUpperCase() + trimmed.slice(1);
 }
 
-/**
- * Finds matching allocation rule from LLM output for a specific receipt item.
- * Supports specific ID/name match, 'REST' for unmatched items, and 'ALL' for the whole bill.
- */
+const STOP_WORDS = new Set([
+  'the', 'a', 'an', 'of', 'for', 'and', 'with', 'item', 'items', 'pack', 'order',
+  'de', 'del', 'la', 'el', 'los', 'las', 'con', 'al', 'du', 'des', 'in', 'on',
+]);
+
+function isWordSimilar(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (a.length >= 4 && b.length >= 4 && (a.includes(b) || b.includes(a))) return true;
+  if (a.length < 4 || b.length < 4 || Math.abs(a.length - b.length) > 2) return false;
+  if (a[0] !== b[0]) return false;
+  const dp = Array.from({ length: a.length + 1 }, (_, i) => i);
+  for (let j = 1; j <= b.length; j++) {
+    let prev = dp[0];
+    dp[0] = j;
+    for (let i = 1; i <= a.length; i++) {
+      const temp = dp[i];
+      dp[i] =
+        a[i - 1] === b[j - 1]
+          ? prev
+          : 1 + Math.min(prev, dp[i], dp[i - 1]);
+      prev = temp;
+    }
+  }
+  return dp[a.length] <= 2;
+}
+
+function doesSpecificRuleMatchItem(
+  item: { id: string; name: string; quantity: number },
+  r: any
+): { matched: boolean; score: number } {
+  const itemId = (item.id || '').toLowerCase().trim();
+  const norm = (s: string) =>
+    s
+      .toLowerCase()
+      .replace(/\bitem[_\s-]*\d+\b/g, ' ')
+      .replace(/\b\d+\s*x\b/g, ' ')
+      .replace(/[^a-z0-9\u00C0-\uFFFF]+/g, ' ')
+      .trim();
+  const itemName = norm(item.name || '');
+  const rawMatch = (typeof r?.itemMatch === 'string' ? r.itemMatch : String(r?.itemMatch ?? '')).trim();
+  if (!rawMatch || REST_MATCH_RE.test(rawMatch) || ALL_MATCH_RE.test(rawMatch)) {
+    return { matched: false, score: 0 };
+  }
+
+  const mLow = rawMatch.toLowerCase();
+  if (mLow === itemId || mLow === `item_${itemId}` || itemId === `item_${mLow}`) {
+    return { matched: true, score: 100 };
+  }
+  const idTokens = mLow.match(/\bitem_\d+\b/g);
+  if (idTokens && idTokens.includes(itemId)) {
+    return { matched: true, score: 95 };
+  }
+
+  const ruleName = norm(rawMatch);
+  if (ruleName && ruleName === itemName) {
+    return { matched: true, score: 90 };
+  }
+
+  const stem = (w: string) => (w.length > 3 ? w.replace(/(?:es|s)$/, '') : w);
+  const meaningfulWords = (s: string) =>
+    norm(s)
+      .split(' ')
+      .filter((w) => w && !/^\d+$/.test(w) && !STOP_WORDS.has(w))
+      .map(stem);
+
+  const itemWords = meaningfulWords(item.name || '');
+  const rWords = meaningfulWords(rawMatch);
+  if (itemWords.length === 0 || rWords.length === 0) {
+    return { matched: false, score: 0 };
+  }
+
+  const hasWord = (list: string[], target: string) => list.some((w) => isWordSimilar(w, target));
+  const allRuleInItem = rWords.every((w) => hasWord(itemWords, w));
+  const allItemInRule = itemWords.every((w) => hasWord(rWords, w));
+  if (allRuleInItem || allItemInRule) {
+    return { matched: true, score: 50 + rWords.length };
+  }
+
+  const overlap = rWords.filter((w) => w.length >= 3 && hasWord(itemWords, w)).length;
+  if (overlap > 0) {
+    return { matched: true, score: overlap * 10 };
+  }
+
+  return { matched: false, score: 0 };
+}
+
 function findMatchingRule(
   item: { id: string; name: string; quantity: number },
-  rules: any[]
+  rules: any[],
+  allItems?: { id: string; name: string; quantity: number }[]
 ): any | undefined {
   if (!rules || rules.length === 0) return undefined;
+  const matchOf = (r: any) =>
+    (typeof r?.itemMatch === 'string' ? r.itemMatch : String(r?.itemMatch ?? '')).trim();
 
-  const itemId = (item.id || '').toLowerCase().trim();
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9\u00C0-\uFFFF]+/g, ' ').trim();
-  const itemName = norm(item.name || '');
-  const matchOf = (r: any) => (typeof r?.itemMatch === 'string' ? r.itemMatch : String(r?.itemMatch ?? '')).trim();
-  const isGeneric = (m: string) => REST_MATCH_RE.test(m) || ALL_MATCH_RE.test(m);
+  // Find all specific rules that match this item, filtering out weak single-word overlaps
+  // when that rule strongly matches (>= 50) a DIFFERENT item on the receipt.
+  const scored = rules
+    .map((r) => ({ rule: r, ...doesSpecificRuleMatchItem(item, r) }))
+    .filter((x) => {
+      if (!x.matched) return false;
+      if (x.score >= 50 || !allItems || allItems.length <= 1) return true;
+      const stronglyMatchesOtherItem = allItems.some(
+        (other) =>
+          other.id !== item.id && doesSpecificRuleMatchItem(other, x.rule).score >= 50
+      );
+      return !stronglyMatchesOtherItem;
+    });
 
-  // 1. Direct ID match (e.g. item_1, 1)
-  const idMatch = rules.find((r) => {
-    const m = matchOf(r).toLowerCase();
-    if (!m) return false;
-    return m === itemId || m === `item_${itemId}` || itemId === `item_${m}`;
-  });
-  if (idMatch) return idMatch;
+  if (scored.length > 0) {
+    const maxScore = Math.max(...scored.map((x) => x.score));
+    // Keep all rules that tied or matched strongly (score >= 50) for this same item
+    const matchingRules = scored
+      .filter((x) => x.score >= 50 || x.score === maxScore)
+      .map((x) => x.rule);
 
-  // 2. Exact name match, then the longest rule whose words all appear as whole words in the item name
-  // ("Coke" must not catch "Diet Coke" when a "Diet Coke" rule exists; "Steak" never matches "Tea").
-  const named = rules.filter((r) => {
-    const m = matchOf(r);
-    return m && !isGeneric(m);
-  });
-  const exact = named.find((r) => norm(matchOf(r)) === itemName);
-  if (exact) return exact;
-  // Singular and plural are treated the same on both sides ("burger" matches "BURGERS" and vice versa).
-  const stem = (w: string) => (w.length > 3 ? w.replace(/(?:es|s)$/, '') : w);
-  const itemWordSet = new Set(itemName.split(' ').map(stem));
-  const wordMatches = named
-    .filter((r) => {
-      const words = norm(matchOf(r)).split(' ').filter(Boolean);
-      return words.length > 0 && words.every((w) => itemWordSet.has(stem(w)));
-    })
-    .sort((a, b) => norm(matchOf(b)).length - norm(matchOf(a)).length);
-  if (wordMatches[0]) return wordMatches[0];
+    if (matchingRules.length === 1) {
+      return matchingRules[0];
+    }
 
-  // 3. Fallback to 'REST' / 'OTHER'
+    // Merge multiple rules targeting the same receipt item (e.g., Ali got Pasta + Sara took 1 Pasta)
+    const combinedShares: { person: string; value: number }[] = [];
+    const combinedExcluded: string[] = [];
+    let combinedRemainder: string[] = [];
+    const hasQuantityRule = matchingRules.some((r) => r.mode === 'quantity');
+    const mergedMode =
+      hasQuantityRule || (item.quantity || 1) > 1 ? 'quantity' : matchingRules[0].mode;
+
+    for (const r of matchingRules) {
+      for (const s of r.shares || []) {
+        const existing = combinedShares.find(
+          (cs) => cs.person.toLowerCase() === String(s.person).toLowerCase()
+        );
+        const val = Number(s.value) > 0 ? Number(s.value) : 1;
+        if (existing) {
+          existing.value += val;
+        } else {
+          combinedShares.push({ person: s.person, value: val });
+        }
+      }
+      for (const ex of r.excluded || []) {
+        if (!combinedExcluded.includes(ex)) combinedExcluded.push(ex);
+      }
+      if (Array.isArray(r.remainderTo) && r.remainderTo.length > 0) {
+        combinedRemainder = r.remainderTo;
+      }
+    }
+
+    return {
+      itemMatch: item.name,
+      mode: mergedMode,
+      shares: combinedShares,
+      excluded: combinedExcluded,
+      remainderTo: combinedRemainder,
+    };
+  }
+
+  // Fallback to 'REST' / 'OTHER'
   const restMatch = rules.find((r) => REST_MATCH_RE.test(matchOf(r)));
   if (restMatch) return restMatch;
 
-  // 4. Fallback to 'ALL' / 'BILL' / 'SPLIT'
+  // Fallback to 'ALL' / 'BILL' / 'SPLIT'
   const allMatch = rules.find((r) => ALL_MATCH_RE.test(matchOf(r)));
   if (allMatch) return allMatch;
 
@@ -427,6 +541,26 @@ function signalOf(parent: AbortSignal | undefined, timeoutMs: number): AbortSign
   return parent ? AbortSignal.any([parent, timeout]) : timeout;
 }
 
+/**
+ * Parses "X, Y, and Z shared/split/took/had/got the rest" transcripts for 2+ people.
+ * Returns the resolved person names in transcript order.
+ */
+function extractRestSharePeopleFromTranscript(
+  transcript: string,
+  resolveName: (raw: string) => string
+): string[] {
+  const m = transcript.match(
+    /(?:^|[.,;]\s*|\band\s+)([a-zA-Z]+(?:\s*,\s*[a-zA-Z]+)*(?:\s*,?\s*and\s+[a-zA-Z]+))\s+(?:shared|split|took|had|got)\s+(?:the\s+)?(?:rest|remaining|others)\b/i
+  );
+  if (!m?.[1]) return [];
+  return m[1]
+    .split(/\s*(?:,|\band\b)\s*/i)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(resolveName)
+    .filter((p) => p && !isGroupWord(p));
+}
+
 export class GeminiParserAdapter implements ExtractionAdapter {
   name = 'gemini-3.5-flash-lite';
   /** Set by the route so Gemini calls stop when the browser cancels the request. */
@@ -595,7 +729,11 @@ Output JSON strictly:
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
           contents: [{ parts: callParts }],
-          generationConfig: { responseMimeType: 'application/json' },
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0,
+            topP: 1,
+          },
         }),
         signal,
       });
@@ -773,8 +911,15 @@ Output JSON strictly:
       req.existingParticipants?.find((p) => p.isHost)?.name ||
       req.existingParticipants?.find((p) => /^(?:me|myself|i|host)$/i.test(p.name))?.name;
 
+    // Detect self-introduction in the typed/spoken command ("My name is Ali", "I am Sara", ...)
+    const selfIntroMatch = req.voiceTranscript?.match(/\b(?:my name is|i am|i'm|this is)\s+([a-zA-Z]+)\b/i);
+    const selfName = selfIntroMatch ? selfIntroMatch[1] : undefined;
+
     const resolveSpeakerName = (raw: string): string => {
       const n = normalizePersonName(raw);
+      if (n === 'Me' && selfName) {
+        return selfName;
+      }
       if (n === 'Me' && existingHostName && existingHostName.trim()) {
         return existingHostName.trim();
       }
@@ -808,6 +953,44 @@ Output JSON strictly:
       };
     });
 
+    // Determine "shared the rest" people from:
+    // 1. An explicit REST rule in rulesList,
+    // 2. Named people placed in any rule's remainderTo by Gemini, or
+    // 3. Explicit "X and Y shared/split the rest" in voiceTranscript.
+    let activeRestRule = rulesList.find((r) => REST_MATCH_RE.test(String(r.itemMatch || '').trim()));
+    let restPeople: string[] =
+      activeRestRule && activeRestRule.mode === 'equal' && Array.isArray(activeRestRule.shares) && activeRestRule.shares.length > 0
+        ? activeRestRule.shares.map((s: any) => resolveSpeakerName(s.person)).filter((p: string) => p && !isGroupWord(p))
+        : [];
+
+    if (restPeople.length === 0) {
+      const ruleWithNamedRemainder = rulesList.find(
+        (r) => Array.isArray(r.remainderTo) && r.remainderTo.some((p: string) => p && p !== 'all' && !isGroupWord(p))
+      );
+      if (ruleWithNamedRemainder) {
+        restPeople = ruleWithNamedRemainder.remainderTo
+          .filter((p: string) => p && p !== 'all' && !isGroupWord(p))
+          .map((p: string) => resolveSpeakerName(p));
+      }
+    }
+
+    if (restPeople.length === 0 && req.voiceTranscript) {
+      restPeople = extractRestSharePeopleFromTranscript(req.voiceTranscript, resolveSpeakerName);
+    }
+
+    // If Gemini didn't emit a standalone REST rule for the other receipt items, synthesize one
+    // whenever the user specified who shared "the rest".
+    if (!activeRestRule && restPeople.length > 0) {
+      activeRestRule = {
+        itemMatch: 'REST',
+        mode: 'equal',
+        shares: restPeople.map((person) => ({ person, value: 1 })),
+        excluded: [],
+        remainderTo: [],
+      };
+      rulesList.push(activeRestRule);
+    }
+
     for (const rule of rulesList) {
       for (const s of rule.shares) participantsSet.add(s.person);
       for (const e of rule.excluded) participantsSet.add(e);
@@ -820,14 +1003,14 @@ Output JSON strictly:
       const tShares: AllocationShare[] = (tr.shares || [])
         .filter((s: any) => !isGroupWord(s.person))
         .map((s: any) => ({
-          person: normalizePersonName(s.person),
+          person: resolveSpeakerName(s.person),
           value: typeof s.value === 'number' ? s.value : parseFloat(s.value) || 0,
         }));
       const tExcluded = (tr.excluded || [])
         .filter((e: string) => !isGroupWord(e))
-        .map((e: string) => normalizePersonName(e));
+        .map((e: string) => resolveSpeakerName(e));
       const tRemainder = (tr.remainderTo || []).map((r: string) =>
-        isGroupWord(r) || r === 'all' ? 'all' : normalizePersonName(r)
+        isGroupWord(r) || r === 'all' ? 'all' : resolveSpeakerName(r)
       );
 
       for (const s of tShares) participantsSet.add(s.person);
@@ -852,26 +1035,7 @@ Output JSON strictly:
       participantsSet.delete('you');
     }
 
-    // Also preserve any participant from an earlier voice turn whose item assignment is still active
-    for (const orig of req.existingItems || []) {
-      const matched = findMatchingRule(
-        {
-          id: orig.id || '',
-          name: (orig.name || orig.description || 'Item').replace(/\s*\(\d+x\)$/i, '').trim(),
-          quantity: orig.quantity || 1,
-        },
-        rulesList
-      );
-      if (!matched) {
-        if (orig.allocationRule) {
-          for (const s of orig.allocationRule.shares || []) participantsSet.add(s.person);
-          for (const e of orig.allocationRule.excluded || []) participantsSet.add(e);
-          for (const r of orig.allocationRule.remainderTo || []) if (r !== 'all') participantsSet.add(r);
-        } else if (orig.assignedTo && orig.assignedTo !== 'split') {
-          orig.assignedTo.split(',').forEach((n) => participantsSet.add(n.trim()));
-        }
-      }
-    }
+    // Single-recording model: all participants come directly from this recording/command.
 
     if (participantsSet.size === 0) {
       (req.existingParticipants || []).forEach((p) => p?.name && participantsSet.add(p.name));
@@ -884,6 +1048,14 @@ Output JSON strictly:
     const participantsList = Array.from(participantMap.values());
 
     const existing = req.existingItems || [];
+    const sanitizedExistingForMatch = existing.map((orig, idx) => ({
+      id: orig.id || `item_${idx + 1}`,
+      name: (orig.name || orig.description || 'Item')
+        .replace(/\s*\(\d+x\)$/i, '')
+        .replace(/\s*\(\d+\s+of\s+\d+\)$/i, '')
+        .trim(),
+      quantity: orig.quantity || 1,
+    }));
     const processedItems: {
       id: string;
       name: string;
@@ -902,18 +1074,83 @@ Output JSON strictly:
       const origPrice = orig.amountCents ? orig.amountCents / 100 : (orig.price || 0);
       const origQty = orig.quantity || 1;
 
-      const matched = findMatchingRule({ id: origId, name: cleanName, quantity: origQty }, rulesList);
+      const matched = findMatchingRule(
+        { id: origId, name: cleanName, quantity: origQty },
+        rulesList,
+        sanitizedExistingForMatch
+      );
 
       if (matched && matched.mode) {
-        const mode = matched.mode as AllocationMode;
+        let mode = matched.mode as AllocationMode;
         const shares: AllocationShare[] = (matched.shares || []).map((s: any) => ({
           person: resolveSpeakerName(s.person),
           value: typeof s.value === 'number' ? s.value : parseFloat(s.value) || 0,
         }));
         const excluded = (matched.excluded || []).map((e: string) => resolveSpeakerName(e));
-        const remainderTo = (matched.remainderTo || []).map((r: string) =>
+        let remainderTo = (matched.remainderTo || []).map((r: string) =>
           r === 'all' ? 'all' : resolveSpeakerName(r)
         );
+
+        // If Gemini returned mode "equal" on a multi-quantity item where a partial count was claimed
+        // and a remainder group exists, treat it as a quantity split.
+        const isRestRule = REST_MATCH_RE.test(String(matched.itemMatch || '').trim());
+        const claimedSum = shares.reduce((s, sh) => s + (sh.value || 0), 0);
+        if (
+          !isRestRule &&
+          mode === 'equal' &&
+          origQty > 1 &&
+          shares.length > 0 &&
+          claimedSum < origQty &&
+          remainderTo.length > 0
+        ) {
+          mode = 'quantity';
+        }
+
+        // Unclaimed units/cents of a quantity / percentage / fixed item go to the people who
+        // "shared the rest" (e.g. Bilal and Ali) whenever remainderTo is empty or "all".
+        if (
+          (mode === 'quantity' || mode === 'percentage' || mode === 'fixed') &&
+          (remainderTo.length === 0 || remainderTo.includes('all')) &&
+          restPeople.length > 0
+        ) {
+          remainderTo = [...restPeople];
+        }
+
+        // Clear remainderTo if 100% of the item's quantity, percentage, or price is already claimed!
+        if (mode === 'quantity' && claimedSum >= origQty) {
+          remainderTo = [];
+        } else if (mode === 'percentage' && claimedSum >= 100) {
+          remainderTo = [];
+        } else if (mode === 'fixed' && claimedSum >= origPrice - 0.005) {
+          remainderTo = [];
+        }
+
+        // If a single person got the entire item in 'equal' mode, show explicit unit count e.g. "Ali (1x)"
+        if (!isRestRule && mode === 'equal' && shares.length === 1 && remainderTo.length === 0) {
+          mode = 'quantity';
+          shares[0].value = origQty;
+        }
+
+        // For quantity splits with remaining units (e.g. 2x item, Sara took 1x, Bilal & Ali shared the rest),
+        // expand the remaining units into explicit fractional shares (e.g. Bilal (0.5x) · Ali (0.5x)).
+        if (mode === 'quantity' && claimedSum > 0 && claimedSum < origQty && remainderTo.length > 0) {
+          const remQty = origQty - claimedSum;
+          const remTargets = remainderTo.includes('all') ? participantsList : remainderTo;
+          if (remTargets.length > 0) {
+            const addPerPerson = Math.round((remQty / remTargets.length) * 100) / 100;
+            for (const personName of remTargets) {
+              const existingShare = shares.find(
+                (s) => s.person.toLowerCase() === personName.toLowerCase()
+              );
+              if (existingShare) {
+                existingShare.value = Math.round((existingShare.value + addPerPerson) * 100) / 100;
+              } else {
+                shares.push({ person: personName, value: addPerPerson });
+              }
+            }
+            remainderTo = [];
+          }
+        }
 
         const allocationRule: AllocationRule = {
           mode,
@@ -1122,18 +1359,9 @@ export class LocalKeywordFallbackAdapter implements ExtractionAdapter {
       voicePairs.push({ person: personName, target: targetItem });
     }
 
-    // 4. Detect shared remainder ("Bilal and I shared the rest")
-    const restShareMatch = transcript.match(
-      /\b([a-zA-Z]+)\s+and\s+([a-zA-Z]+)\s+(?:shared|split|took)\s+(?:the\s+)?(?:rest|remaining|others)\b/i
-    );
-    let restSharePeople: string[] | null = null;
-    if (restShareMatch) {
-      const p1 = resolveName(restShareMatch[1]);
-      const p2 = resolveName(restShareMatch[2]);
-      if (!isGroupWord(p1)) participantsSet.add(p1);
-      if (!isGroupWord(p2)) participantsSet.add(p2);
-      restSharePeople = [p1, p2].filter((p) => !isGroupWord(p));
-    }
+    // 4. Detect shared remainder ("Bilal, Zaid, and I shared the rest")
+    const restSharePeople = extractRestSharePeopleFromTranscript(transcript, resolveName);
+    for (const p of restSharePeople) participantsSet.add(p);
 
     if (participantsSet.size === 0) {
       participantsSet.add(speakerSelfName);
