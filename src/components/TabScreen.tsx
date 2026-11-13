@@ -51,6 +51,7 @@ export function TabScreen({ step }: { step: TabStep }) {
   const [voiceApplied, setVoiceApplied] = useState(false);
   const [busy, setBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const voiceAbortRef = React.useRef<AbortController | null>(null);
   const [selectedPerson, setSelectedPerson] = useState<string | null>(null);
   const [initialFilter, setInitialFilter] = useState<'all' | 'unpaid' | 'paid'>('all');
   const [fromHistory, setFromHistory] = useState<boolean>(false);
@@ -128,33 +129,54 @@ export function TabScreen({ step }: { step: TabStep }) {
       const baseRows = toUnassignedRows(baseline.rows);
       const baseParticipants: WizardParticipant[] = [];
 
+      voiceAbortRef.current?.abort();
+      const controller = new AbortController();
+      voiceAbortRef.current = controller;
+
+      const payloadStr = JSON.stringify({
+        tabId: ledger.id,
+        audio: aud || undefined,
+        voiceTranscript: txt || undefined,
+        existingItems: baseRows,
+        existingParticipants: baseParticipants,
+        merchant: ledger.merchant,
+        date: ledger.date,
+        taxCents: ledger.taxCents,
+        taxPercentage: ledger.taxPercentage,
+        isTaxInclusive: ledger.isTaxInclusive,
+        taxType: ledger.taxType,
+        serviceChargeCents: ledger.serviceChargeCents,
+        discountCents: baseline.discountCents,
+        roundOffCents: ledger.roundOffCents,
+        tipCents: ledger.tipCents || 0,
+        tipAllocationRule: ledger.tipAllocationRule,
+        totalCents: ledger.totalCents,
+      });
+
       setBusy(true);
       setVoiceError(null);
       try {
-        const res = await fetch('/api/parse-tab', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tabId: ledger.id,
-            audio: aud || undefined,
-            voiceTranscript: txt || undefined,
-            existingItems: baseRows,
-            existingParticipants: baseParticipants,
-            merchant: ledger.merchant,
-            date: ledger.date,
-            taxCents: ledger.taxCents,
-            taxPercentage: ledger.taxPercentage,
-            isTaxInclusive: ledger.isTaxInclusive,
-            taxType: ledger.taxType,
-            serviceChargeCents: ledger.serviceChargeCents,
-            discountCents: baseline.discountCents,
-            roundOffCents: ledger.roundOffCents,
-            tipCents: ledger.tipCents || 0,
-            tipAllocationRule: ledger.tipAllocationRule,
-            totalCents: ledger.totalCents,
-          }),
-        });
-        const data = await res.json().catch(() => null);
+        const sendRequest = async () => {
+          const res = await fetch('/api/parse-tab', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: payloadStr,
+            signal: controller.signal,
+          });
+          const data = await res.json().catch(() => null);
+          return { res, data };
+        };
+
+        let { res, data } = await sendRequest();
+        if (
+          !res.ok &&
+          (res.status === 502 || res.status === 503 || res.status === 504) &&
+          !controller.signal.aborted
+        ) {
+          await new Promise((r) => setTimeout(r, 350));
+          ({ res, data } = await sendRequest());
+        }
+
         if (!res.ok || !data?.ledger) {
           setVoiceError(data?.message || `Could not apply the command (HTTP ${res.status}).`);
           return { ok: false };
@@ -172,11 +194,14 @@ export function TabScreen({ step }: { step: TabStep }) {
         setVoiceApplied(true);
         if (data.fallbackReason) console.warn(data.fallbackReason);
         return { ok: true, updatedLedger: updated, updatedParticipants: ps };
-      } catch {
+      } catch (err) {
+        if ((err as Error)?.name === 'AbortError') return { ok: false };
         setVoiceError('Could not reach the server. Check your connection and try again.');
         return { ok: false };
       } finally {
-        setBusy(false);
+        if (voiceAbortRef.current === controller) {
+          setBusy(false);
+        }
       }
     },
     [ledger, audioBase64, voiceTranscript, participants, commit]

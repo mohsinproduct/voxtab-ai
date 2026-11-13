@@ -279,6 +279,7 @@ function validateReceiptStructure(data: any): { valid: boolean; error?: string }
 function sanitizeVoiceOutput(data: any): {
   participants: string[];
   rules: any[];
+  speakerName: string | null;
   tipOverride: any;
   tipRule: any;
   discountOverride: any;
@@ -330,6 +331,7 @@ function sanitizeVoiceOutput(data: any): {
   return {
     participants: names(data.participants),
     rules,
+    speakerName: typeof data.speakerName === 'string' && data.speakerName.trim() ? data.speakerName.trim() : null,
     tipOverride: data.tipOverride,
     tipRule,
     discountOverride: data.discountOverride,
@@ -653,8 +655,8 @@ ${JSON.stringify(sanitizedItems, null, 2)}
 ${req.voiceTranscript?.trim() ? `Typed Command:\n"${req.voiceTranscript.trim()}"\n` : ''}${hasAudio ? 'Spoken Command: in the attached audio recording. Listen to it and use it as the command.\n' : ''}
 RULES:
 1. [Who]: Extract ONLY participant names explicitly mentioned in the command.
-   - CRITICAL SELF-INTRODUCTION RULE: If a speaker states their name (e.g. "My name is Ali and I took...", "I am Sara, I got...", "This is Bilal, I had..."), map their first-person pronouns ("I", "me", "my") directly to their stated name ("Ali", "Sara", "Bilal") and DO NOT extract "Me" for that speaker. This also applies when multiple people speak in sequence ("I'm Ali, I got X. I'm Sara, I got Y").
-   - Only normalize "I", "me", "myself" to "Me" when the speaker does NOT state their own name.
+   - CRITICAL SELF-INTRODUCTION RULE: If a speaker states their name (e.g. "My name is Ali and I took...", "I am Sara, I got...", "This is Bilal, I had..."), set "speakerName" to that person's name (e.g. "Ali") and map all of their "I"/"me"/"my" pronouns directly to their stated name ("Ali", "Sara", "Bilal"). DO NOT extract "Me" for that speaker. This also applies when multiple people speak in sequence ("I'm Ali, I got X. I'm Sara, I got Y").
+   - Only normalize "I", "me", "myself" to "Me" when the speaker does NOT state their own name (and speakerName is null).
    - If "You" is typed, treat "You" as someone's name. In spoken audio recordings, ignore conversational filler addressed to the AI assistant (e.g. "Can you split...", "Could you add...") and do NOT extract "You" as a participant from spoken audio unless explicitly typed.
 2. [HowMany] & [What]: For each item (or "REST" for remaining items, or "ALL" for whole bill), output an allocation rule:
    - mode: "equal" | "exclude" | "quantity" | "percentage" | "fixed"
@@ -673,6 +675,7 @@ RULES:
 Output JSON strictly:
 {
   "participants": ["string"],
+  "speakerName": "string | null",
   "rules": [
     {
       "itemMatch": "item_1 or item name or REST or ALL",
@@ -715,15 +718,16 @@ Output JSON strictly:
       });
     }
 
-    // Gemini models in priority order (no aliases that resolve to the same model).
-    const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-flash-latest'];
+    // Retry primary model on a fresh connection if a request stalls before failing over to backup model.
+    const modelsToTry = ['gemini-3.5-flash-lite', 'gemini-3.5-flash-lite', 'gemini-flash-latest'];
+    const perAttemptTimeoutMs = isImageScanOnly ? 11000 : hasAudio ? 8500 : 5500;
 
     let lastError: any = null;
     let validatedParsed: any = null;
     let badOutput = false;
 
-    const callModel = async (model: string, callParts: any[]) => {
-      const signal = signalOf(this.abortSignal, 45000);
+    const callModel = async (model: string, callParts: any[], timeoutMs = perAttemptTimeoutMs) => {
+      const signal = signalOf(this.abortSignal, timeoutMs);
       return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKey },
@@ -913,7 +917,14 @@ Output JSON strictly:
 
     // Detect self-introduction in the typed/spoken command ("My name is Ali", "I am Sara", ...)
     const selfIntroMatch = req.voiceTranscript?.match(/\b(?:my name is|i am|i'm|this is)\s+([a-zA-Z]+)\b/i);
-    const selfName = selfIntroMatch ? selfIntroMatch[1] : undefined;
+    const parsedSpeaker =
+      typeof validatedParsed.speakerName === 'string' &&
+      validatedParsed.speakerName.trim() &&
+      !isGroupWord(validatedParsed.speakerName) &&
+      !/^(?:i|me|myself|null|none)$/i.test(validatedParsed.speakerName.trim())
+        ? normalizePersonName(validatedParsed.speakerName.trim())
+        : undefined;
+    const selfName = selfIntroMatch ? normalizePersonName(selfIntroMatch[1]) : parsedSpeaker;
 
     const resolveSpeakerName = (raw: string): string => {
       const n = normalizePersonName(raw);

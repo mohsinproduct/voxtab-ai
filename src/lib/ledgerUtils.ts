@@ -96,19 +96,40 @@ export function toUnassignedRows(rows: LedgerRow[]): LedgerRow[] {
 /** Scrubs removed participants from item and tip rules so deleted names never leave ghost badges. */
 export function scrubRemovedParticipants(ledger: TabLedger, activeNames: string[]): TabLedger {
   const activeSet = new Set(activeNames.map((n) => n.trim().toLowerCase()));
-  const cleanRule = (rule?: AllocationRule): AllocationRule | undefined => {
+  const cleanRule = (rule?: AllocationRule, rowQty = 1): AllocationRule | undefined => {
     if (!rule) return undefined;
-    const shares = (rule.shares || []).filter((s) => activeSet.has(s.person.trim().toLowerCase()));
+    const shares = (rule.shares || [])
+      .filter((s) => activeSet.has(s.person.trim().toLowerCase()))
+      .map((s) => ({ ...s }));
     const excluded = (rule.excluded || []).filter((e) => activeSet.has(e.trim().toLowerCase()));
+    const hadRemainder = Boolean(rule.remainderTo && rule.remainderTo.length > 0);
     const remainderTo = (rule.remainderTo || []).filter(
       (r) => r === 'all' || activeSet.has(r.trim().toLowerCase())
     );
     if (shares.length === 0 && excluded.length === 0) return undefined;
-    return { ...rule, shares, excluded, remainderTo: remainderTo.length ? remainderTo : ['all'] };
+
+    const nextRemainder = hadRemainder ? (remainderTo.length ? remainderTo : ['all']) : undefined;
+
+    if (rule.mode === 'quantity' && !nextRemainder && shares.length > 0) {
+      const sum = shares.reduce((acc, s) => acc + (s.value || 0), 0);
+      if (sum > 0 && Math.abs(sum - rowQty) > 0.01) {
+        const factor = rowQty / sum;
+        for (const s of shares) {
+          s.value = Math.round(s.value * factor * 100) / 100;
+        }
+      }
+    }
+
+    return {
+      ...rule,
+      shares,
+      ...(excluded.length > 0 ? { excluded } : {}),
+      ...(nextRemainder ? { remainderTo: nextRemainder } : {}),
+    };
   };
 
   const rows = (ledger.rows || []).map((r) => {
-    const nextRule = cleanRule(r.allocationRule);
+    const nextRule = cleanRule(r.allocationRule, r.quantity || 1);
     const nextAssigned =
       r.assignedTo && r.assignedTo !== 'split' && activeSet.has(r.assignedTo.trim().toLowerCase())
         ? r.assignedTo
@@ -367,18 +388,26 @@ export function evaluateRowCents(row: LedgerRow, participants: string[]): Map<st
         const unitCents = row.amountCents / totalQty;
         let sumUnits = 0;
 
-        for (const s of rule.shares || []) {
-          const matchedPerson = resolvePerson(s.person, participants);
-          if (matchedPerson) {
+        const validShares = (rule.shares || []).filter((s) => Boolean(resolvePerson(s.person, participants)));
+        const claimedTotal = validShares.reduce((acc, s) => acc + (s.value || 0), 0);
+
+        for (const s of validShares) {
+          const matchedPerson = resolvePerson(s.person, participants)!;
+          if (!rule.remainderTo || rule.remainderTo.length === 0) {
+            // All units already expanded into rule.shares: allocate proportionally by value weight
+            // so rounded fractions (0.33x x3) never leave unallocated cents.
+            const shareCents = claimedTotal > 0 ? (s.value / claimedTotal) * row.amountCents : s.value * unitCents;
+            rawMap.set(matchedPerson, (rawMap.get(matchedPerson) ?? 0) + shareCents);
+          } else {
             rawMap.set(matchedPerson, (rawMap.get(matchedPerson) ?? 0) + s.value * unitCents);
-            sumUnits += s.value;
           }
+          sumUnits += s.value;
         }
 
         const remainingUnits = Math.max(0, totalQty - sumUnits);
-        if (remainingUnits > 0) {
+        if (remainingUnits > 0 && (!!rule.remainderTo && rule.remainderTo.length > 0)) {
           let remainderTargets: string[] = [];
-          if (rule.remainderTo && rule.remainderTo.length > 0 && !rule.remainderTo.includes('all')) {
+          if (rule.remainderTo && !rule.remainderTo.includes('all')) {
             remainderTargets = rule.remainderTo
               .map((r) => resolvePerson(r, participants))
               .filter((p): p is string => Boolean(p));

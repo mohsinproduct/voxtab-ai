@@ -772,12 +772,14 @@ export function StepSettle({
   const handlePayViaPayPal = async (p: (typeof enrichedParticipants)[number]) => {
     // Guard: only open orders from the current bill generation.
     if (p.order?.approveUrl && p.order.shareCode === shareCode) {
-      window.open(p.order.approveUrl, '_blank', 'noopener,noreferrer');
+      const win = window.open(p.order.approveUrl, '_blank', 'noopener,noreferrer');
+      if (!win) window.location.assign(p.order.approveUrl);
       return;
     }
     const created = await ensureOrderForPerson(p.split);
     if (created?.approveUrl) {
-      window.open(created.approveUrl, '_blank', 'noopener,noreferrer');
+      const win = window.open(created.approveUrl, '_blank', 'noopener,noreferrer');
+      if (!win) window.location.assign(created.approveUrl);
     }
   };
 
